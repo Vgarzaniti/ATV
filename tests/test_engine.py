@@ -399,3 +399,38 @@ def test_hydration_pipeline_end_to_end() -> None:
     assert node.camelot_key == "8A"
     assert node.anio == 2025
     assert len(node.secciones) >= 3
+
+
+def test_stochastic_playbooks_and_maneuver_cooldown() -> None:
+    from test_run import build_playlist_and_initial_track
+    from atv.engine.decision_engine import StochasticSelector, plan_stochastic_playbooks
+
+    current_track, pool, history = build_playlist_and_initial_track()
+    state = SessionState(
+        target_energy=0.88,
+        session_history=history,
+        creativity_temperature=0.40,
+        session_seed=11,
+        min_viable_score=65.0,
+    )
+
+    out_1 = plan_stochastic_playbooks(current_track, pool, state)
+    all_pbs = [out_1.selected_playbook, *out_1.alternative_playbooks]
+
+    # Must generate at least 4 distinct tactical playbooks above min_viable_score
+    assert len(all_pbs) >= 4
+    assert all(pb.raw_score >= 65.0 for pb in all_pbs)
+    assert sum(pb.selection_probability for pb in all_pbs) == pytest.approx(1.0, abs=1e-2)
+
+    # Verify 30% maneuver cooldown reduction when repeating the same archetype
+    winner_arch = out_1.selected_playbook.archetype
+    prob_without_cooldown = out_1.selected_playbook.selection_probability
+
+    cooled_pbs = StochasticSelector.compute_probabilities(
+        playbooks=all_pbs,
+        temperature=0.40,
+        last_archetype=winner_arch,
+    )
+    prob_with_cooldown = next(pb.selection_probability for pb in cooled_pbs if pb.archetype == winner_arch)
+    assert prob_with_cooldown < prob_without_cooldown
+

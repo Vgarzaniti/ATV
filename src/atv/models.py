@@ -1,4 +1,4 @@
-"""Strict data models for TrackNode, TrackSection, SessionState, TransitionPlan, and DJActionPlan."""
+"""Strict data models for TrackNode, TrackSection, SessionState, TransitionPlan, DJActionPlan, and Playbooks."""
 
 from __future__ import annotations
 
@@ -13,6 +13,13 @@ EndingType = Literal["cold_end", "fade_out"]
 SectionType = Literal["intro", "verso", "estribillo", "build_up", "drop", "puente", "outro"]
 TransitionType = Literal["CROSSFADE", "QUICK_CUT", "COLD_END_START", "DROP_SWAP"]
 DJActionType = Literal["SEEK_LOOP", "SECTION_JUMP", "TRACK_TRANSITION", "CALLBACK_TEASE"]
+PlaybookArchetype = Literal[
+    "STANDARD_BLEND",
+    "LOOP_EXTENDED_MIX",
+    "RE_CHORUS_SURGE",
+    "EARLY_POWER_CUT",
+    "HISTORY_CALLBACK",
+]
 
 
 class TrackSection(BaseModel):
@@ -120,7 +127,7 @@ class TrackNode(BaseModel):
 
 
 class SessionState(BaseModel):
-    """Runtime context of the active DJ session, including Spotify Connect latency compensation."""
+    """Runtime context of the active DJ session, including temperature and maneuver cooldowns."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -133,6 +140,10 @@ class SessionState(BaseModel):
     top_k_candidates: int = Field(default=15, ge=1)
     network_latency_offset_ms: int = Field(default=250, ge=0, le=2000)
     enable_callback_tease: bool = False
+    creativity_temperature: float = Field(default=0.4, ge=0.05, le=1.5)
+    session_seed: int | None = None
+    last_maneuver_archetype: PlaybookArchetype | None = None
+    min_viable_score: float = Field(default=65.0, ge=0.0, le=100.0)
 
 
 class TransitionPlan(BaseModel):
@@ -184,3 +195,23 @@ class DJActionPlan(BaseModel):
     final_transition: TransitionPlan
     overall_score: float
     reasoning_log: list[str] = Field(default_factory=list)
+
+
+class CandidatePlaybook(BaseModel):
+    """Tactical DJ maneuver option with a raw quality score (0-100) and Softmax selection probability."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    archetype: PlaybookArchetype
+    action_plan: DJActionPlan
+    raw_score: float = Field(ge=0.0, le=100.0)
+    selection_probability: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class DecisionEngineOutput(BaseModel):
+    """Envelope containing the stochastically selected playbook and all competing viable playbooks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_playbook: CandidatePlaybook
+    alternative_playbooks: list[CandidatePlaybook] = Field(default_factory=list)

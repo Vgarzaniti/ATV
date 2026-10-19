@@ -3,12 +3,14 @@
 from atv.engine.decision_engine import (
     EvaluatedEdge,
     HybridDJDecisionEngine,
+    StochasticSelector,
     calculate_quantized_loop,
     evaluate_callback_tease,
     evaluate_intra_track_edges,
     evaluate_section_edge,
     plan_dj_action_timeline,
     plan_next_transition,
+    plan_stochastic_playbooks,
     snap_to_beatgrid,
 )
 from atv.engine.vector_filter import RankedCandidate, effective_bpm_difference_pct, filter_and_rank_candidates
@@ -17,6 +19,7 @@ __all__ = [
     "EvaluatedEdge",
     "HybridDJDecisionEngine",
     "RankedCandidate",
+    "StochasticSelector",
     "calculate_quantized_loop",
     "effective_bpm_difference_pct",
     "evaluate_callback_tease",
@@ -25,5 +28,6 @@ __all__ = [
     "filter_and_rank_candidates",
     "plan_dj_action_timeline",
     "plan_next_transition",
+    "plan_stochastic_playbooks",
     "snap_to_beatgrid",
 ]
