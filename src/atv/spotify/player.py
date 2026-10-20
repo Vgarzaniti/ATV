@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import queue
 import re
 import sys
+import threading
 import time
 from typing import Any
 import httpx
@@ -218,16 +220,10 @@ class LiveDJSessionRunner:
                 device_id=device_id,
             )
 
-    def run_live_loop(self, track_pool: list[TrackNode], max_transitions: int = 10) -> None:
-        """Monitor active Spotify playback and execute stochastic DJ playbooks in real time."""
-        if len(track_pool) < 2:
-            raise ValueError("At least 2 tracks are required in the pool to run a live DJ session.")
-
-        pool_by_uri = {t.spotify_uri: t for t in track_pool}
-        played_ids: set[str] = set()
-        played_artists: list[str] = []
-        session_history: list[TrackNode] = []
-        last_archetype: PlaybookArchetype | None = None
+    def run_live_loop(self, raw_metadata_pool: list[SpotifyBaseMetadata], max_transitions: int = 15) -> None:
+        """Monitor active Spotify playback and run background streaming hydration so playback never blocks."""
+        if not raw_metadata_pool:
+            raise ValueError("No tracks provided in pool.")
 
         status = self._spotify.get_playback_status()
         if status is None:
@@ -237,98 +233,156 @@ class LiveDJSessionRunner:
             )
 
         device_id = status.device_id
-        current_track = pool_by_uri.get(status.track_uri, track_pool[0])
-        if status.track_uri != current_track.spotify_uri:
-            print(f"Starting initial track from pool: {current_track.autor} - {current_track.titulo}")
+
+        # 1. Immediate start: hydrate ONLY the first track (or current playing track) right away
+        active_raw = next((r for r in raw_metadata_pool if r.uri == status.track_uri), raw_metadata_pool[0])
+        print(f"\n⚡ Immediate start: Hydrating initial track [{active_raw.primary_artist} - {active_raw.name}]...")
+        initial_track_node = self._hydrator.hydrate_track(active_raw)
+        print(f"  Initial track ready: {initial_track_node.bpm:.1f} BPM | Key={initial_track_node.camelot_key} | Sections={len(initial_track_node.secciones)}")
+
+        if status.track_uri != initial_track_node.spotify_uri:
+            print(f"Starting playback: {initial_track_node.autor} - {initial_track_node.titulo}")
             self._spotify.start_or_transfer_playback(
-                track_uri=current_track.spotify_uri,
-                position_ms=current_track.first_downbeat_ms,
+                track_uri=initial_track_node.spotify_uri,
+                position_ms=initial_track_node.first_downbeat_ms,
                 device_id=device_id,
             )
-            time.sleep(1.0)
 
-        for step in range(1, max_transitions + 1):
-            session_state = SessionState(
-                target_energy=self._config.target_energy,
-                played_track_ids=played_ids,
-                played_artistsHistory=played_artists,
-                session_history=session_history,
-                network_latency_offset_ms=self._config.network_latency_offset_ms,
-                creativity_temperature=self._config.creativity_temperature,
-                last_maneuver_archetype=last_archetype,
-            )
+        # Candidate pool for the DJ engine (thread-safe shared list)
+        candidate_pool: list[TrackNode] = []
+        pool_by_uri: dict[str, TrackNode] = {initial_track_node.spotify_uri: initial_track_node}
+        pool_lock = threading.Lock()
+        stop_worker = threading.Event()
 
-            decision = self._engine.plan_stochastic_playbooks(
-                current_track=current_track,
-                candidate_pool=track_pool,
-                session_state=session_state,
-            )
-            winner = decision.selected_playbook
-            plan: DJActionPlan = winner.action_plan
-            last_archetype = winner.archetype
+        # 2. Background worker: continuously hydratates candidate tracks in the background
+        remaining_raw = [r for r in raw_metadata_pool if r.uri != initial_track_node.spotify_uri]
 
-            print("\n" + "=" * 88)
-            print(f"[LIVE DJ DECK - TRACK #{step}] Now Playing: {current_track.autor} - {current_track.titulo}")
-            print(
-                f"Selected Playbook: [{winner.archetype}] (Prob={winner.selection_probability * 100:.1f}%, "
-                f"Score={winner.raw_score:.1f}) -> Next: {plan.next_track_uri}"
-            )
-            for idx, ev in enumerate(plan.timeline, start=1):
-                print(
-                    f"  Queue #{idx}: {ev.action_type} at {ev.trigger_at_progress_ms}ms -> "
-                    f"target {ev.target_position_ms}ms ({ev.from_section_type}->{ev.to_section_type})"
-                )
-            print("=" * 88)
-
-            # Execute timeline events chronologically as Spotify progress_ms reaches each trigger_at_progress_ms
-            pending_events = list(plan.timeline)
-            loop_counts: dict[int, int] = {}
-            last_status_print = 0.0
-
-            while pending_events:
-                playback = self._spotify.get_playback_status()
-                if playback is None:
-                    time.sleep(self._config.poll_interval_sec)
-                    continue
-
-                next_ev = pending_events[0]
-                remaining_sec = max(0.0, (next_ev.trigger_at_progress_ms - playback.progress_ms) / 1000.0)
-
-                # Live progress ticker every ~3 seconds
-                now = time.time()
-                if now - last_status_print >= 3.0:
-                    curr_sec = playback.progress_ms / 1000.0
-                    trig_sec = next_ev.trigger_at_progress_ms / 1000.0
+        def _hydration_worker() -> None:
+            for idx, raw in enumerate(remaining_raw, start=1):
+                if stop_worker.is_set():
+                    break
+                try:
+                    node = self._hydrator.hydrate_track(raw)
+                    with pool_lock:
+                        candidate_pool.append(node)
+                        pool_by_uri[node.spotify_uri] = node
                     sys.stdout.write(
-                        f"\r  ⏱️ [{playback.artist_name} - {playback.track_name}] "
-                        f"{curr_sec:.1f}s / {trig_sec:.1f}s -> Disparando {next_ev.action_type} en {remaining_sec:.1f}s...    "
+                        f"\n  [+Background Pool #{len(candidate_pool):02d}] Ready: {node.autor} - {node.titulo} "
+                        f"({node.bpm:.1f} BPM, {node.camelot_key})\n"
                     )
                     sys.stdout.flush()
-                    last_status_print = now
+                except Exception:
+                    pass
 
-                if playback.progress_ms >= next_ev.trigger_at_progress_ms:
-                    sys.stdout.write("\n")
-                    self.execute_timeline_event(next_ev, device_id=device_id)
-                    ev_id = id(next_ev)
-                    executed_times = loop_counts.get(ev_id, 0) + 1
-                    loop_counts[ev_id] = executed_times
+        worker_thread = threading.Thread(target=_hydration_worker, daemon=True)
+        worker_thread.start()
 
-                    if next_ev.action_type == "SEEK_LOOP" and executed_times < next_ev.loop_iterations:
-                        # Keep event at front of queue for remaining loop_iterations
-                        time.sleep(0.6)
+        # 3. DJ Main Session Loop
+        current_track = initial_track_node
+        played_ids: set[str] = set()
+        played_artists: list[str] = []
+        session_history: list[TrackNode] = []
+        last_archetype: PlaybookArchetype | None = None
+
+        try:
+            for step in range(1, max_transitions + 1):
+                # Wait until at least 1 viable candidate has finished hydrating in background
+                while True:
+                    with pool_lock:
+                        available_candidates = [
+                            c for c in candidate_pool
+                            if c.track_id != current_track.track_id and c.track_id not in played_ids
+                        ]
+                    if available_candidates:
+                        break
+                    sys.stdout.write("\r⏳ Waiting for first background candidate track to hydrate... ")
+                    sys.stdout.flush()
+                    time.sleep(0.5)
+
+                session_state = SessionState(
+                    target_energy=self._config.target_energy,
+                    played_track_ids=played_ids,
+                    played_artistsHistory=played_artists,
+                    session_history=session_history,
+                    network_latency_offset_ms=self._config.network_latency_offset_ms,
+                    creativity_temperature=self._config.creativity_temperature,
+                    last_maneuver_archetype=last_archetype,
+                )
+
+                with pool_lock:
+                    decision = self._engine.plan_stochastic_playbooks(
+                        current_track=current_track,
+                        candidate_pool=available_candidates,
+                        session_state=session_state,
+                    )
+
+                winner = decision.selected_playbook
+                plan: DJActionPlan = winner.action_plan
+                last_archetype = winner.archetype
+
+                print("\n" + "=" * 88)
+                print(f"[LIVE DJ DECK - TRACK #{step}] Now Playing: {current_track.autor} - {current_track.titulo}")
+                print(
+                    f"Selected Playbook: [{winner.archetype}] (Prob={winner.selection_probability * 100:.1f}%, "
+                    f"Score={winner.raw_score:.1f}) -> Next: {plan.next_track_uri}"
+                )
+                for idx, ev in enumerate(plan.timeline, start=1):
+                    print(
+                        f"  Queue #{idx}: {ev.action_type} at {ev.trigger_at_progress_ms}ms -> "
+                        f"target {ev.target_position_ms}ms ({ev.from_section_type}->{ev.to_section_type})"
+                    )
+                print("=" * 88)
+
+                pending_events = list(plan.timeline)
+                loop_counts: dict[int, int] = {}
+                last_status_print = 0.0
+
+                while pending_events:
+                    playback = self._spotify.get_playback_status()
+                    if playback is None:
+                        time.sleep(self._config.poll_interval_sec)
+                        continue
+
+                    next_ev = pending_events[0]
+                    remaining_sec = max(0.0, (next_ev.trigger_at_progress_ms - playback.progress_ms) / 1000.0)
+
+                    now = time.time()
+                    if now - last_status_print >= 3.0:
+                        curr_sec = playback.progress_ms / 1000.0
+                        trig_sec = next_ev.trigger_at_progress_ms / 1000.0
+                        sys.stdout.write(
+                            f"\r  ⏱️ [{playback.artist_name} - {playback.track_name}] "
+                            f"{curr_sec:.1f}s / {trig_sec:.1f}s -> Disparando {next_ev.action_type} en {remaining_sec:.1f}s...    "
+                        )
+                        sys.stdout.flush()
+                        last_status_print = now
+
+                    if playback.progress_ms >= next_ev.trigger_at_progress_ms:
+                        sys.stdout.write("\n")
+                        self.execute_timeline_event(next_ev, device_id=device_id)
+                        ev_id = id(next_ev)
+                        executed_times = loop_counts.get(ev_id, 0) + 1
+                        loop_counts[ev_id] = executed_times
+
+                        if next_ev.action_type == "SEEK_LOOP" and executed_times < next_ev.loop_iterations:
+                            time.sleep(0.6)
+                        else:
+                            pending_events.pop(0)
+                            if next_ev.action_type == "TRACK_TRANSITION":
+                                break
+                            time.sleep(0.6)
                     else:
-                        pending_events.pop(0)
-                        if next_ev.action_type == "TRACK_TRANSITION":
-                            break
-                        time.sleep(0.6)
-                else:
-                    time.sleep(self._config.poll_interval_sec)
+                        time.sleep(self._config.poll_interval_sec)
 
-            played_ids.add(current_track.track_id)
-            played_artists.append(current_track.autor)
-            session_history.append(current_track)
+                played_ids.add(current_track.track_id)
+                played_artists.append(current_track.autor)
+                session_history.append(current_track)
 
-            next_node = pool_by_uri.get(plan.next_track_uri)
-            if next_node is None:
-                break
-            current_track = next_node
+                with pool_lock:
+                    next_node = pool_by_uri.get(plan.next_track_uri)
+                if next_node is None:
+                    break
+                current_track = next_node
+
+        finally:
+            stop_worker.set()

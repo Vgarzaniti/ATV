@@ -64,9 +64,10 @@ def main() -> int:
 
     runner = LiveDJSessionRunner(spotify_client=client, config=config)
 
+    # 1. Fetch lightweight metadata instantly from Spotify (takes < 0.5s)
     if args.liked:
         print("Fetching your Spotify Liked Songs ('Tus me gusta')...")
-        pool = runner.hydrate_liked_tracks_pool(max_tracks=args.max_tracks)
+        raw_tracks = client.fetch_saved_tracks(limit=args.max_tracks)
     else:
         playlist_target = args.playlist.strip() or config.default_playlist
         if not playlist_target:
@@ -74,7 +75,7 @@ def main() -> int:
             if not choice:
                 args.liked = True
                 print("Fetching your Spotify Liked Songs ('Tus me gusta')...")
-                pool = runner.hydrate_liked_tracks_pool(max_tracks=args.max_tracks)
+                raw_tracks = client.fetch_saved_tracks(limit=args.max_tracks)
             else:
                 playlist_target = choice
 
@@ -82,13 +83,15 @@ def main() -> int:
             if not playlist_target:
                 print("No playlist or source selected. Exiting.")
                 return 1
-            pool = runner.hydrate_playlist_pool(playlist_target, max_tracks=args.max_tracks)
+            raw_tracks = client.fetch_playlist_tracks(playlist_target, limit=args.max_tracks)
 
-    if len(pool) < 2:
-        print("Playlist must contain at least 2 valid tracks.")
+    if len(raw_tracks) < 2:
+        print("Need at least 2 tracks in library/playlist.")
         return 1
 
+    # In dry-run mode, hydrate a few synchronously to inspect
     if args.dry_run:
+        pool = runner.hydrate_tracks(raw_tracks[:5])
         engine = HybridDJDecisionEngine()
         session = SessionState(
             target_energy=config.target_energy,
@@ -109,7 +112,8 @@ def main() -> int:
         print("=" * 95)
         return 0
 
-    runner.run_live_loop(pool)
+    # Live Mode: Instant start! Runs playback immediately and hydrates candidate pool in background
+    runner.run_live_loop(raw_tracks, max_transitions=15)
     return 0
 
 
