@@ -63,6 +63,14 @@ class SpotifyConnectClient:
             resp.raise_for_status()
             return resp.json()
 
+    def get_available_devices(self) -> list[dict[str, Any]]:
+        """List user's active/available Spotify Connect devices."""
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(f"{SPOTIFY_API_BASE}/me/player/devices", headers=self._headers())
+            if resp.status_code == 200:
+                return resp.json().get("devices", [])
+        return []
+
     def get_playback_status(self) -> PlaybackStatus | None:
         with httpx.Client(timeout=self._timeout) as client:
             resp = client.get(f"{SPOTIFY_API_BASE}/me/player", headers=self._headers())
@@ -226,13 +234,21 @@ class LiveDJSessionRunner:
             raise ValueError("No tracks provided in pool.")
 
         status = self._spotify.get_playback_status()
-        if status is None:
-            raise RuntimeError(
-                "No active Spotify playback device detected. Open Spotify on your phone, desktop, or web player, "
-                "press play on any song so Spotify Connect registers the active device, and run again."
-            )
+        device_id = status.device_id if status else None
 
-        device_id = status.device_id
+        if device_id is None:
+            devices = self._spotify.get_available_devices()
+            if devices:
+                # Prefer active device, or first available one
+                chosen = next((d for d in devices if d.get("is_active")), devices[0])
+                device_id = chosen.get("id")
+                print(f"📡 Found Spotify device: {chosen.get('name')} ({chosen.get('type')})")
+            else:
+                raise RuntimeError(
+                    "No active Spotify playback device detected.\n"
+                    "👉 Abre Spotify en tu PC o celular, dale Play a cualquier canción un segundo "
+                    "para que Spotify Connect reconozca el dispositivo, y vuelve a correr el comando."
+                )
 
         # 1. Immediate start: hydrate ONLY the first track (or current playing track) right away
         active_raw = next((r for r in raw_metadata_pool if r.uri == status.track_uri), raw_metadata_pool[0])
