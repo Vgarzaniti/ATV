@@ -376,11 +376,10 @@ class LiveDJSessionRunner:
                     if now - last_status_print >= 3.0:
                         curr_sec = playback.progress_ms / 1000.0
                         trig_sec = next_ev.trigger_at_progress_ms / 1000.0
-                        sys.stdout.write(
-                            f"\r  ⏱️ [{playback.artist_name} - {playback.track_name}] "
-                            f"{curr_sec:.1f}s / {trig_sec:.1f}s -> Disparando {next_ev.action_type} en {remaining_sec:.1f}s...    "
+                        print(
+                            f"  ⏱️ [{playback.artist_name} - {playback.track_name}] "
+                            f"{curr_sec:.1f}s / {trig_sec:.1f}s -> Disparando {next_ev.action_type} en {remaining_sec:.1f}s..."
                         )
-                        sys.stdout.flush()
                         last_status_print = now
 
                     if playback.progress_ms >= next_ev.trigger_at_progress_ms:
