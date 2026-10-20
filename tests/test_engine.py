@@ -434,3 +434,27 @@ def test_stochastic_playbooks_and_maneuver_cooldown() -> None:
     prob_with_cooldown = next(pb.selection_probability for pb in cooled_pbs if pb.archetype == winner_arch)
     assert prob_with_cooldown < prob_without_cooldown
 
+
+def test_spotify_pkce_and_playlist_parser(tmp_path) -> None:
+    from atv.config import SpotifyAppConfig
+    from atv.spotify import extract_playlist_id, generate_pkce_pair
+
+    verifier, challenge = generate_pkce_pair()
+    assert len(verifier) >= 43
+    assert len(challenge) >= 40
+    assert "=" not in challenge
+
+    assert extract_playlist_id("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc") == "37i9dQZF1DXcBWIGoYBM5M"
+    assert extract_playlist_id("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M") == "37i9dQZF1DXcBWIGoYBM5M"
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "SPOTIFY_CLIENT_ID=test_client_123\nDJ_TARGET_ENERGY=0.91\nDJ_CREATIVITY_TEMPERATURE=0.55\n",
+        encoding="utf-8",
+    )
+    cfg = SpotifyAppConfig.from_env(env_file)
+    assert cfg.client_id == "test_client_123"
+    assert cfg.target_energy == pytest.approx(0.91)
+    assert cfg.creativity_temperature == pytest.approx(0.55)
+
+

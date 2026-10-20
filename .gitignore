@@ -8,4 +8,5 @@ dist/
 build/
 *.egg-info/
 .env
+.spotify_token_cache.json
 .codegraph/
