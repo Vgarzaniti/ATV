@@ -23,7 +23,8 @@ SPOTIFY_SCOPES = (
     "user-modify-playback-state "
     "user-read-currently-playing "
     "playlist-read-private "
-    "playlist-read-collaborative"
+    "playlist-read-collaborative "
+    "user-library-read"
 )
 
 

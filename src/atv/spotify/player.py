@@ -84,6 +84,24 @@ class SpotifyConnectClient:
             volume_percent=int(device.get("volume_percent") or 100),
         )
 
+    def fetch_saved_tracks(self, limit: int = 50) -> list[SpotifyBaseMetadata]:
+        """Fetch saved/liked tracks (canciones que te gustan) from Spotify library (/v1/me/tracks)."""
+        results: list[SpotifyBaseMetadata] = []
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(
+                f"{SPOTIFY_API_BASE}/me/tracks",
+                headers=self._headers(),
+                params={"limit": min(limit, 50)},
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            for entry in items:
+                track_obj = entry.get("track")
+                if not track_obj or not track_obj.get("id"):
+                    continue
+                results.append(SpotifyBaseMetadata.from_spotify_dict(track_obj))
+        return results
+
     def fetch_playlist_tracks(self, playlist_input: str, limit: int = 50) -> list[SpotifyBaseMetadata]:
         """Fetch track metadata items (including ISRC) from a Spotify playlist."""
         pid = extract_playlist_id(playlist_input)
@@ -160,8 +178,7 @@ class LiveDJSessionRunner:
         self._hydrator = TrackHydrationPipeline(acoustic_provider=osint_client, lrc_provider=osint_client)
         self._engine = HybridDJDecisionEngine()
 
-    def hydrate_playlist_pool(self, playlist_input: str, max_tracks: int = 25) -> list[TrackNode]:
-        raw_tracks = self._spotify.fetch_playlist_tracks(playlist_input, limit=max_tracks)
+    def hydrate_tracks(self, raw_tracks: list[SpotifyBaseMetadata]) -> list[TrackNode]:
         hydrated: list[TrackNode] = []
         print(f"Hydrating {len(raw_tracks)} tracks via OSINT (Deezer BPM/Preview + LRCLIB Synced Lyrics)...")
         for idx, meta in enumerate(raw_tracks, start=1):
@@ -172,6 +189,14 @@ class LiveDJSessionRunner:
                 f"{node.bpm:.1f} BPM | Key={node.camelot_key} | Sections={len(node.secciones)}"
             )
         return hydrated
+
+    def hydrate_playlist_pool(self, playlist_input: str, max_tracks: int = 25) -> list[TrackNode]:
+        raw_tracks = self._spotify.fetch_playlist_tracks(playlist_input, limit=max_tracks)
+        return self.hydrate_tracks(raw_tracks)
+
+    def hydrate_liked_tracks_pool(self, max_tracks: int = 25) -> list[TrackNode]:
+        raw_tracks = self._spotify.fetch_saved_tracks(limit=max_tracks)
+        return self.hydrate_tracks(raw_tracks)
 
     def execute_timeline_event(self, ev: DJTimelineEvent, device_id: str | None = None) -> None:
         """Dispatch the corresponding Spotify Connect API call for a DJTimelineEvent."""

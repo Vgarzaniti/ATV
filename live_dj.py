@@ -17,6 +17,11 @@ def parse_args() -> argparse.Namespace:
         description="ATV Autonomous DJ — Spotify Premium OAuth2 PKCE & Live Session Runner"
     )
     parser.add_argument(
+        "--liked",
+        action="store_true",
+        help="Use your Spotify 'Tus me gusta' / Liked Songs library as the track pool",
+    )
+    parser.add_argument(
         "--playlist",
         type=str,
         default="",
@@ -57,16 +62,28 @@ def main() -> int:
     product = profile.get("product", "unknown")
     print(f"Authenticated as: {display_name} (Account tier: {product})")
 
-    playlist_target = args.playlist.strip() or config.default_playlist
-    if not playlist_target:
-        playlist_target = input("Paste a Spotify Playlist URL or URI to load into the DJ Engine: ").strip()
-
-    if not playlist_target:
-        print("No playlist provided. Exiting.")
-        return 1
-
     runner = LiveDJSessionRunner(spotify_client=client, config=config)
-    pool = runner.hydrate_playlist_pool(playlist_target, max_tracks=args.max_tracks)
+
+    if args.liked:
+        print("Fetching your Spotify Liked Songs ('Tus me gusta')...")
+        pool = runner.hydrate_liked_tracks_pool(max_tracks=args.max_tracks)
+    else:
+        playlist_target = args.playlist.strip() or config.default_playlist
+        if not playlist_target:
+            choice = input("Enter Spotify Playlist URL/URI (or press Enter for 'Tus me gusta'): ").strip()
+            if not choice:
+                args.liked = True
+                print("Fetching your Spotify Liked Songs ('Tus me gusta')...")
+                pool = runner.hydrate_liked_tracks_pool(max_tracks=args.max_tracks)
+            else:
+                playlist_target = choice
+
+        if not args.liked:
+            if not playlist_target:
+                print("No playlist or source selected. Exiting.")
+                return 1
+            pool = runner.hydrate_playlist_pool(playlist_target, max_tracks=args.max_tracks)
+
     if len(pool) < 2:
         print("Playlist must contain at least 2 valid tracks.")
         return 1
