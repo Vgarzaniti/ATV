@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import sys
 import time
 from typing import Any
 import httpx
@@ -282,6 +283,7 @@ class LiveDJSessionRunner:
             # Execute timeline events chronologically as Spotify progress_ms reaches each trigger_at_progress_ms
             pending_events = list(plan.timeline)
             loop_counts: dict[int, int] = {}
+            last_status_print = 0.0
 
             while pending_events:
                 playback = self._spotify.get_playback_status()
@@ -290,7 +292,22 @@ class LiveDJSessionRunner:
                     continue
 
                 next_ev = pending_events[0]
+                remaining_sec = max(0.0, (next_ev.trigger_at_progress_ms - playback.progress_ms) / 1000.0)
+
+                # Live progress ticker every ~3 seconds
+                now = time.time()
+                if now - last_status_print >= 3.0:
+                    curr_sec = playback.progress_ms / 1000.0
+                    trig_sec = next_ev.trigger_at_progress_ms / 1000.0
+                    sys.stdout.write(
+                        f"\r  ⏱️ [{playback.artist_name} - {playback.track_name}] "
+                        f"{curr_sec:.1f}s / {trig_sec:.1f}s -> Disparando {next_ev.action_type} en {remaining_sec:.1f}s...    "
+                    )
+                    sys.stdout.flush()
+                    last_status_print = now
+
                 if playback.progress_ms >= next_ev.trigger_at_progress_ms:
+                    sys.stdout.write("\n")
                     self.execute_timeline_event(next_ev, device_id=device_id)
                     ev_id = id(next_ev)
                     executed_times = loop_counts.get(ev_id, 0) + 1
