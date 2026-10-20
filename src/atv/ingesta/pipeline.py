@@ -245,6 +245,7 @@ class TrackHydrationPipeline:
             camelot_key=camelot,
             energia_global=global_energy,
             valencia_mood=osint_features.valence,
+            preview_url=osint_features.preview_mp3_url,
             ending_type=ending_type,
             secciones=sections,
         )

@@ -75,6 +75,7 @@ class TrackNode(BaseModel):
     camelot_key: str
     energia_global: float = Field(ge=0.0, le=1.0)
     valencia_mood: float = Field(ge=0.0, le=1.0)
+    preview_url: str | None = None
 
     # Morphology
     ending_type: EndingType = "cold_end"

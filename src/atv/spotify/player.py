@@ -63,6 +63,28 @@ class SpotifyConnectClient:
             resp.raise_for_status()
             return resp.json()
 
+    def get_user_playlists(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Fetch current user's playlists."""
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(
+                f"{SPOTIFY_API_BASE}/me/playlists",
+                headers=self._headers(),
+                params={"limit": min(limit, 50)},
+            )
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+                return [
+                    {
+                        "id": p["id"],
+                        "name": p["name"],
+                        "uri": p["uri"],
+                        "tracks_count": p.get("tracks", {}).get("total", 0),
+                        "image": p.get("images", [{}])[0].get("url") if p.get("images") else None,
+                    }
+                    for p in items if p and "id" in p
+                ]
+        return []
+
     def get_available_devices(self) -> list[dict[str, Any]]:
         """List user's active/available Spotify Connect devices."""
         with httpx.Client(timeout=self._timeout) as client:
