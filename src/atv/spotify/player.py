@@ -302,7 +302,7 @@ class LiveDJSessionRunner:
 
         try:
             for step in range(1, max_transitions + 1):
-                # Wait until at least 1 viable candidate has finished hydrating in background
+                # Wait until at least 1 candidate passes Phase 1 filters or at least 3 candidates are in pool
                 while True:
                     with pool_lock:
                         available_candidates = [
@@ -310,8 +310,18 @@ class LiveDJSessionRunner:
                             if c.track_id != current_track.track_id and c.track_id not in played_ids
                         ]
                     if available_candidates:
-                        break
-                    sys.stdout.write("\r⏳ Waiting for first background candidate track to hydrate... ")
+                        # Check if at least one candidate is compatible or if we've accumulated enough candidates
+                        temp_session = SessionState(
+                            target_energy=self._config.target_energy,
+                            played_track_ids=played_ids,
+                            played_artistsHistory=played_artists,
+                        )
+                        from atv.engine.vector_filter import filter_and_rank_candidates
+                        ranked = filter_and_rank_candidates(current_track, available_candidates, temp_session)
+                        if ranked or len(available_candidates) >= 4 or not worker_thread.is_alive():
+                            break
+
+                    sys.stdout.write("\r⏳ Waiting for compatible background candidate tracks to hydrate... ")
                     sys.stdout.flush()
                     time.sleep(0.5)
 

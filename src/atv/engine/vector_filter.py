@@ -96,6 +96,18 @@ def filter_and_rank_candidates(
         survivors.append((cand, bpm_diff_pct, ratio_mode))
 
     if not survivors:
+        # Fallback for small initial pools: relax author and bpm tolerance so the session never crashes
+        for cand in candidate_pool:
+            if cand.track_id == current_track.track_id or cand.track_id in session_state.played_track_ids:
+                continue
+            bpm_diff_pct, ratio_mode = effective_bpm_difference_pct(
+                current_track.bpm,
+                cand.bpm,
+                allow_double_half=True,
+            )
+            survivors.append((cand, bpm_diff_pct, ratio_mode))
+
+    if not survivors:
         return []
 
     # Vectorized matrix computation over all survivors
