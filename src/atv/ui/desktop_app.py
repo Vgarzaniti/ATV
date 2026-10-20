@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import io
 import math
 from pathlib import Path
@@ -106,6 +108,12 @@ class DesktopDJApp(tk.Tk):
         self.geometry("1180x760")
         self.minsize(980, 680)
         self.configure(bg=BG_MAIN)
+
+        # Force window to top and visible
+        self.lift()
+        self.attributes('-topmost', True)
+        self.after_idle(self.attributes, '-topmost', False)
+        self.focus_force()
 
         # Core Backend State
         self.config = SpotifyAppConfig.from_env(".env")
