@@ -146,8 +146,11 @@ class DesktopDJApp(tk.Tk):
         self._build_ui()
         self._load_playlists_async()
 
-        # Start periodic GUI updater
-        self.after(500, self._periodic_ui_update)
+        # Cached status updated in background to avoid blocking the Tkinter event loop
+        self.cached_playback_status: PlaybackStatus | None = None
+        self._start_status_poller()
+
+        self.after(200, self._periodic_ui_update)
 
     def _build_ui(self) -> None:
         # 1. Top Navigation Bar
@@ -543,6 +546,18 @@ class DesktopDJApp(tk.Tk):
 
     # --- UI Periodic Refresh ---
 
+    def _start_status_poller(self) -> None:
+        def _poller() -> None:
+            while True:
+                try:
+                    st = self.spotify.get_playback_status()
+                    self.cached_playback_status = st
+                except Exception:
+                    pass
+                time.sleep(0.5)
+
+        threading.Thread(target=_poller, daemon=True).start()
+
     def _periodic_ui_update(self) -> None:
         try:
             # Update Current Track & Progress
@@ -557,7 +572,7 @@ class DesktopDJApp(tk.Tk):
                 m_tot, s_tot = divmod(int(dur_s), 60)
                 self.lbl_total_time.config(text=f"{m_tot:02d}:{s_tot:02d}")
 
-                pb = self.spotify.get_playback_status()
+                pb = self.cached_playback_status
                 prog_ms = pb.progress_ms if pb else 0
                 prog_s = prog_ms / 1000.0
                 m_cur, s_cur = divmod(int(prog_s), 60)
