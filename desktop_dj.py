@@ -1,8 +1,8 @@
-"""ATV Autonomous DJ Desktop Application Entrypoint."""
+"""ATV Autonomous DJ Desktop Mini-Deck Application Entrypoint."""
 
 import sys
-print("Iniciando ATV Desktop Studio...")
-from atv.ui.desktop_app import run_desktop_app
+print("Iniciando ATV Mini Deck...")
+from atv.ui.mini_deck import run_mini_app
 
 if __name__ == "__main__":
-    run_desktop_app()
+    run_mini_app()
