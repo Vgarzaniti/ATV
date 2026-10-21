@@ -26,23 +26,26 @@ def snap_to_beatgrid(
     first_downbeat_ms: int,
     bar_duration_ms: float,
     max_duration_ms: int | None = None,
+    phrase_bars: int = 1,
 ) -> int:
-    """Quantize a timestamp in milliseconds to the nearest musical bar boundary.
+    """Quantize a timestamp in milliseconds to the nearest musical phrase or bar boundary.
 
-    Formula: first_downbeat_ms + round((target_ms - first_downbeat_ms) / bar_duration_ms) * bar_duration_ms
+    If phrase_bars > 1 (e.g. 4, 8, or 16 bars), snatches the exact beat 1 of a structural DJ phrase.
+    Formula: first_downbeat_ms + round((target_ms - first_downbeat_ms) / step_ms) * step_ms
     """
-    if bar_duration_ms <= 0:
+    step_ms = bar_duration_ms * max(1, phrase_bars)
+    if step_ms <= 0:
         return max(0, target_ms)
     if target_ms <= first_downbeat_ms:
         snapped = first_downbeat_ms
     else:
-        bars_index = round((target_ms - first_downbeat_ms) / bar_duration_ms)
-        snapped = int(round(first_downbeat_ms + bars_index * bar_duration_ms))
+        index = round((target_ms - first_downbeat_ms) / step_ms)
+        snapped = int(round(first_downbeat_ms + index * step_ms))
 
     snapped = max(0, snapped)
     if max_duration_ms is not None and snapped > max_duration_ms:
-        bars_floor = int((max_duration_ms - first_downbeat_ms) // bar_duration_ms)
-        snapped = max(0, int(round(first_downbeat_ms + bars_floor * bar_duration_ms)))
+        floor_idx = int((max_duration_ms - first_downbeat_ms) // step_ms)
+        snapped = max(0, int(round(first_downbeat_ms + floor_idx * step_ms)))
     return snapped
 
 
@@ -446,18 +449,20 @@ def evaluate_section_edge(
     energy_step_bonus = max(0.0, 0.10 * (1.0 - local_energy_delta))
     score += energy_step_bonus
 
-    # --- RULE 4: Beatgrid Snapping ---
+    # --- RULE 4: Beatgrid & Phrase Snapping (4-bar musical phrase alignment) ---
     snapped_exit_ms = snap_to_beatgrid(
         target_ms=raw_exit_ms,
         first_downbeat_ms=track_a.first_downbeat_ms,
         bar_duration_ms=track_a.bar_duration_ms,
         max_duration_ms=track_a.duration_ms,
+        phrase_bars=4 if transition_type == "CROSSFADE" else 1,
     )
     snapped_entry_ms = snap_to_beatgrid(
         target_ms=raw_entry_ms,
         first_downbeat_ms=track_b.first_downbeat_ms,
         bar_duration_ms=track_b.bar_duration_ms,
         max_duration_ms=track_b.duration_ms,
+        phrase_bars=4 if transition_type == "CROSSFADE" else 1,
     )
     logs.append(
         f"Beatgrid Snapping: Exit {raw_exit_ms}ms->{snapped_exit_ms}ms (bar={track_a.bar_duration_ms:.1f}ms), "
@@ -485,6 +490,7 @@ def evaluate_section_edge(
 
 
 def _edge_to_transition_plan(edge: EvaluatedEdge) -> TransitionPlan:
+    curve_shape = "EQUAL_POWER" if edge.transition_type == "CROSSFADE" else "SHARP_CUT"
     return TransitionPlan(
         next_track_uri=edge.candidate.spotify_uri,
         transition_type=edge.transition_type,
@@ -493,6 +499,7 @@ def _edge_to_transition_plan(edge: EvaluatedEdge) -> TransitionPlan:
         trigger_at_progress_ms=edge.trigger_at_progress_ms,
         start_next_at_position_ms=edge.start_next_at_position_ms,
         recommended_fade_duration_ms=edge.recommended_fade_duration_ms,
+        fade_curve=curve_shape,
         transition_score=edge.total_score,
         reasoning_log=edge.logs,
     )
@@ -528,6 +535,7 @@ def _wrap_action_plan(
         loop_iterations=0,
         transition_type=inter_plan.transition_type,
         recommended_fade_duration_ms=inter_plan.recommended_fade_duration_ms,
+        fade_curve=inter_plan.fade_curve,
         event_score=inter_plan.transition_score,
         reasoning_log=inter_plan.reasoning_log,
     )

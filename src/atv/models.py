@@ -159,6 +159,7 @@ class TransitionPlan(BaseModel):
     trigger_at_progress_ms: int      # Exact ms in Track A to trigger transition
     start_next_at_position_ms: int   # Exact ms in Track B to start playback (position_ms in Spotify API)
     recommended_fade_duration_ms: int # 0 if QUICK_CUT
+    fade_curve: str = "EQUAL_POWER"
     transition_score: float          # Final decision score
     reasoning_log: list[str]         # Deterministic audit trail explaining why this edge won
 
@@ -180,6 +181,7 @@ class DJTimelineEvent(BaseModel):
     loop_iterations: int = Field(default=0, ge=0)
     transition_type: TransitionType | None = None
     recommended_fade_duration_ms: int = Field(default=0, ge=0)
+    fade_curve: str = "EQUAL_POWER"
     event_score: float = Field(default=1.0)
     reasoning_log: list[str] = Field(default_factory=list)
 

@@ -14,6 +14,7 @@ import httpx
 import pygame
 
 from atv.config import SpotifyAppConfig
+from atv.engine import MultiDeckMixer, calculate_volume_levels
 from atv.engine.decision_engine import HybridDJDecisionEngine
 from atv.ingesta.pipeline import DeezerAcousticBrainzClient, SpotifyBaseMetadata, TrackHydrationPipeline
 from atv.models import (
@@ -116,6 +117,7 @@ class MiniDJDeckApp(tk.Tk):
             lrc_provider=DeezerAcousticBrainzClient(),
         )
         self.engine = HybridDJDecisionEngine()
+        self.multi_mixer = MultiDeckMixer(max_decks=4)
         self.previewer = MiniPreviewEngine()
 
         self.raw_pool: list[SpotifyBaseMetadata] = []
@@ -414,6 +416,19 @@ class MiniDJDeckApp(tk.Tk):
 
                 ev = self.timeline_pending[0]
                 if pb.progress_ms >= ev.trigger_at_progress_ms:
+                    fade_ms = ev.recommended_fade_duration_ms or 5000
+                    nxt_node = self.candidate_by_uri.get(ev.target_track_uri)
+
+                    # Trigger local multi-track crossfade if previews are available
+                    if nxt_node and nxt_node.preview_url and self.multi_mixer:
+                        self.multi_mixer.transition_to_track(
+                            next_track_uri=ev.target_track_uri,
+                            next_preview_url=nxt_node.preview_url,
+                            duration_ms=fade_ms,
+                            curve=getattr(ev, "fade_curve", "EQUAL_POWER"),
+                        )
+
+                    # Execute Spotify Connect Action
                     if ev.action_type in ("SEEK_LOOP", "SECTION_JUMP") and ev.current_track_uri == ev.target_track_uri:
                         self.spotify.seek_position(ev.target_position_ms, device_id=self.active_device_id)
                     else:

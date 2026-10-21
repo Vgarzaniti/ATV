@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import os
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+from atv.ui.mini_deck import MiniDJDeckApp, run_mini_app
+
+# Backward-compatible redirect to clean modular mini deck
+DesktopDJApp = MiniDJDeckApp
 import io
 import math
 from pathlib import Path
